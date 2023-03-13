@@ -1,4 +1,6 @@
-﻿using Microsoft.Extensions.Hosting;
+﻿using MailSender.Models.ConfigModels;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Options;
 using Newtonsoft.Json;
 using Publisher.Dto;
 using RabbitMQ.Client;
@@ -8,16 +10,24 @@ namespace MailSender.Static
 {
     public class Consumer : BackgroundService
     {
-        private IModel _channel;
+        private readonly IModel _channel;
         private readonly IMailSenderService _send;
+        private readonly RabbitConfigModel _options;
         CancellationToken token;
 
-        public Consumer(IMailSenderService send)
+        public Consumer(IMailSenderService send, IOptions<RabbitConfigModel> options)
         {
-            var factory = new ConnectionFactory() { HostName = "localhost" };
-            var connection = factory.CreateConnection();
-            _channel = connection.CreateModel();
             _send = send;
+            _options = options.Value;
+            var factory = new ConnectionFactory() { 
+                HostName = _options.HostName, 
+                Password = _options.Password, 
+                UserName = _options.Username, 
+                Port = _options.Port, 
+                VirtualHost = _options.VirtualHost 
+            };
+            var connection = factory.CreateConnection();
+            _channel = connection.CreateModel();  
         }
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -57,21 +67,21 @@ namespace MailSender.Static
         private async void Send()
         {
             _channel.ExchangeDeclare(
-                exchange: "MultiThread",
-                type: ExchangeType.Direct,
-                durable: true,
-                autoDelete: false);
+                exchange: _options.QueueConfig.QueueName,
+                type: _options.ExchangeConfig.Type,
+                durable: _options.ExchangeConfig.Durable,
+                autoDelete: _options.ExchangeConfig.AutoDelete);
 
             var queue = _channel.QueueDeclare(
-                queue: "MultiThread.Queue",
-                durable: true,
-                exclusive: false,
-                autoDelete: false,
+                queue: _options.QueueConfig.QueueName,
+                durable: _options.QueueConfig.Durable,
+                exclusive: _options.QueueConfig.Exclusive,
+                autoDelete: _options.QueueConfig.AutoDelete,
                 arguments: null).QueueName;
 
-            _channel.QueueBind(queue, "MultiThread", "MultiThread.Queue");
+            _channel.QueueBind(queue, _options.ExchangeConfig.ExchangeName, _options.QueueConfig.RoutingKey);
             
-            while (true)
+            while (!token.IsCancellationRequested)
             {
                 var result = _channel.BasicGet(queue, false);
 
@@ -85,7 +95,7 @@ namespace MailSender.Static
                         await _send.SendMessageAsync(message);
                         Console.WriteLine($"{Thread.CurrentThread.Name} | {message}");
                         _channel.BasicAck(result.DeliveryTag, false);
-                        Thread.Sleep(5000);
+                        //Thread.Sleep(5000);
                     }
                     catch
                     {

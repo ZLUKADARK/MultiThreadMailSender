@@ -6,7 +6,7 @@ using System.Net.Mail;
 
 public class MailSenderService : IMailSenderService 
 {
-    private MailConfigModel _mailConfig;
+    private readonly MailConfigModel _mailConfig;
 
     public MailSenderService(IOptions<MailConfigModel> options)
     {
