@@ -13,9 +13,10 @@ namespace MailSender.Static
         private readonly IModel _channel;
         private readonly IMailSenderService _send;
         private readonly RabbitConfigModel _options;
+        private readonly MailSenderConfig _senderOptions;
         CancellationToken token;
 
-        public Consumer(IMailSenderService send, IOptions<RabbitConfigModel> options)
+        public Consumer(IMailSenderService send, IOptions<RabbitConfigModel> options, IOptions<MailSenderConfig> senderOptions)
         {
             _send = send;
             _options = options.Value;
@@ -27,7 +28,8 @@ namespace MailSender.Static
                 VirtualHost = _options.VirtualHost 
             };
             var connection = factory.CreateConnection();
-            _channel = connection.CreateModel();  
+            _channel = connection.CreateModel(); 
+            _senderOptions = senderOptions.Value;
         }
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -38,7 +40,7 @@ namespace MailSender.Static
 
         public void Consume()
         {
-            for (int i = 1; i <= 5; i++)
+            for (int i = 1; i <= _senderOptions.Threads; i++)
             {
                 Thread thread = new(Send);
                 thread.Name = $"Thread №{i}";   // устанавливаем имя для каждого потока
@@ -83,6 +85,7 @@ namespace MailSender.Static
             
             while (!token.IsCancellationRequested)
             {
+                var s = _senderOptions;
                 var result = _channel.BasicGet(queue, false);
 
                 if (result != null)
@@ -95,18 +98,16 @@ namespace MailSender.Static
                         await _send.SendMessageAsync(message);
                         Console.WriteLine($"{Thread.CurrentThread.Name} | {message}");
                         _channel.BasicAck(result.DeliveryTag, false);
-                        //Thread.Sleep(5000);
+                        Thread.Sleep(_senderOptions.WaitMilliseconds);
                     }
                     catch
                     {
-                        Thread.Sleep(5000);
                         _channel.BasicNack(result.DeliveryTag, false, true);
                     }
                 }
                 else
                 {
                     Console.WriteLine($"Очередь пуста {Thread.CurrentThread.Name}");
-                    Thread.Sleep(5000);
                 }
             }
         }

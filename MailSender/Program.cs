@@ -19,6 +19,7 @@ builder.Services.AddHostedService<Consumer>();
 //Configuration model binds 
 builder.Services.Configure<MailConfigModel>(builder.Configuration.GetSection("MailConfig"));
 builder.Services.Configure<RabbitConfigModel>(builder.Configuration.GetSection("RabbitConfig"));
+builder.Services.Configure<MailSenderConfig>(builder.Configuration.GetSection("MailSenderConfig"));
 
 var app = builder.Build();
 
