@@ -1,5 +1,6 @@
 using MailSender.Models.ConfigModels;
 using MailSender.Static;
+using Microsoft.Extensions.Logging;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -31,6 +32,11 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseHttpsRedirection();
+
+app.Services.GetService<ILoggerFactory>();
+
+var loggerFactory = app.Services.GetService<ILoggerFactory>();
+loggerFactory.AddFile(builder.Configuration["Logging:LogFilePath"].ToString());
 
 app.UseAuthorization();
 

@@ -1,4 +1,5 @@
 ﻿using MailSender.Models.ConfigModels;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Publisher.Dto;
 using System.Net;
@@ -7,10 +8,12 @@ using System.Net.Mail;
 public class MailSenderService : IMailSenderService 
 {
     private readonly MailConfigModel _mailConfig;
+    private readonly ILogger<MailSenderService> _logger;
 
-    public MailSenderService(IOptions<MailConfigModel> options)
+    public MailSenderService(IOptions<MailConfigModel> options, ILogger<MailSenderService> logger)
     {
         _mailConfig = options.Value;
+        _logger = logger;
     }
 
     public async Task SendMessageAsync(EmailMessage message)
@@ -42,13 +45,13 @@ public class MailSenderService : IMailSenderService
             smtpClient.Credentials = new NetworkCredential(_mailConfig.FromEmail, _mailConfig.Password);
             smtpClient.EnableSsl = _mailConfig.SSL;
             await smtpClient.SendMailAsync(message);
-            Console.WriteLine($"Доставлено | {Thread.CurrentThread.ManagedThreadId} | {message.To}");
+            smtpClient.Dispose();
+            _logger.LogInformation($"Succes | {DateTime.Now} | To: {message.To} From: {message.From.DisplayName}");
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"Ошибка отправки | Поток Id: {Thread.CurrentThread.ManagedThreadId} | {message.To} {message.Body}");
-            Console.WriteLine($"Ошибка | Поток Id: {Thread.CurrentThread.ManagedThreadId} | {ex.Message}");
-            throw new Exception();
+            _logger.LogError($"Error | {DateTime.Now} | EM: {ex.Message} | To: {message.To} From: {message.From.DisplayName}");
+            throw ex;
         }
     }
 }

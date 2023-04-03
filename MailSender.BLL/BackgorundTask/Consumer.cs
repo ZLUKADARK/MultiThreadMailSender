@@ -1,5 +1,6 @@
 ﻿using MailSender.Models.ConfigModels;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Newtonsoft.Json;
 using Publisher.Dto;
@@ -14,9 +15,13 @@ namespace MailSender.Static
         private readonly IMailSenderService _send;
         private readonly RabbitConfigModel _options;
         private readonly MailSenderConfig _senderOptions;
+        private readonly ILogger<Consumer> _logger;
         CancellationToken token;
 
-        public Consumer(IMailSenderService send, IOptions<RabbitConfigModel> options, IOptions<MailSenderConfig> senderOptions)
+        public Consumer(IMailSenderService send, 
+            IOptions<RabbitConfigModel> options, 
+            IOptions<MailSenderConfig> senderOptions,
+            ILogger<Consumer> logger)
         {
             _send = send;
             _options = options.Value;
@@ -30,6 +35,7 @@ namespace MailSender.Static
             var connection = factory.CreateConnection();
             _channel = connection.CreateModel(); 
             _senderOptions = senderOptions.Value;
+            _logger = logger;
         }
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -45,24 +51,6 @@ namespace MailSender.Static
                 Thread thread = new(Send);
                 thread.Name = $"Thread №{i}";   // устанавливаем имя для каждого потока
                 thread.Start();
-            }
-        }
-
-        private EmailMessage JsonMessageConvert(string jsonMessage)
-        {
-            return JsonConvert.DeserializeObject<EmailMessage>(jsonMessage);
-        }
-
-        private static bool MessageValidator(EmailMessage message)
-        {
-            if (string.IsNullOrEmpty(message.Receiver.Address))
-            {
-                Console.WriteLine("Адрес получателя пуст");
-                return false;
-            }
-            else
-            {
-                return true;
             }
         }
 
@@ -85,30 +73,55 @@ namespace MailSender.Static
             
             while (!token.IsCancellationRequested)
             {
-                var s = _senderOptions;
                 var result = _channel.BasicGet(queue, false);
 
                 if (result != null)
                 {
                     var messageJson = Encoding.UTF8.GetString(result.Body.ToArray());
                     var message = JsonMessageConvert(messageJson);
+                    if (message != null)
+                    {
+                        try
+                        {
+                            await _send.SendMessageAsync(message);
+                            _channel.BasicAck(result.DeliveryTag, false);
+                            Thread.Sleep(_senderOptions.WaitMilliseconds);
+                        }
+                        catch
+                        {
+                            _channel.BasicNack(result.DeliveryTag, false, true);
+                        }
+                    }
+                    _channel.BasicAck(result.DeliveryTag, false);
+                }
+            }
+        }
 
-                    try
-                    {
-                        await _send.SendMessageAsync(message);
-                        Console.WriteLine($"{Thread.CurrentThread.Name} | {message}");
-                        _channel.BasicAck(result.DeliveryTag, false);
-                        Thread.Sleep(_senderOptions.WaitMilliseconds);
-                    }
-                    catch
-                    {
-                        _channel.BasicNack(result.DeliveryTag, false, true);
-                    }
-                }
-                else
+        private EmailMessage JsonMessageConvert(string jsonMessage)
+        {
+            var message = JsonConvert.DeserializeObject<EmailMessage>(jsonMessage);
+            try
+            {
+                if (string.IsNullOrEmpty(message.ContentPlain) && string.IsNullOrEmpty(message.ContentHtml))
                 {
-                    Console.WriteLine($"Очередь пуста {Thread.CurrentThread.Name}");
+                    throw new Exception("Message body empty");
                 }
+                if (string.IsNullOrEmpty(message.Receiver.Address))
+                {
+                    throw new Exception("Message receiver address empty");
+                }
+                if (string.IsNullOrEmpty(message.Subject))
+                {
+                    _logger.LogWarning($"Warning | {DateTime.Now} | Email Message Convert Warning" +
+                        $" | WM: Message subject empty | To: {message.Receiver.Address} From: {message.SenderName}");
+                }
+                return message;
+            }
+            catch(Exception ex) 
+            {
+                _logger.LogError($"Error | {DateTime.Now} | Email Message Convert Problem" +
+                    $" | EM: {ex.Message} | To: {message.Receiver.Address} From: {message.SenderName}");
+                return null;
             }
         }
     }
